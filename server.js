@@ -15,13 +15,20 @@ connectDB();
 const app = express();
 
 app.use(cors());
-app.use(express.json()); 
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true })); 
 
 app.use('/api/auth', authRoutes);
 app.use('/api/customers', customerRoutes);
 app.use('/api/orders', orderRoutes);
 app.get('/', (req, res) => {
   res.send('Aadvi Atelier API is running...');
+});
+
+// Global error handler to catch Multer and other unhandled errors
+app.use((err, req, res, next) => {
+  console.error('Unhandled Error:', err);
+  res.status(500).json({ message: err.message || 'Internal Server Error', error: err });
 });
 
 // Force restart
@@ -34,3 +41,4 @@ app.listen(PORT, () => {
 });
 
 export default app;
+// trigger restart

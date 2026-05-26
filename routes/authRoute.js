@@ -1,5 +1,5 @@
 import express from 'express';
-import { login, register, getStaff, updateProfile, updateStaffProfile } from '../controllers/authController.js';
+import { login, register, getStaff, updateProfile, updateStaffProfile, deleteStaff, saveExpoPushToken } from '../controllers/AuthController.js';
 import { protect, authorize } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -8,7 +8,9 @@ router.post('/register', register);
 router.post('/login', login);
 router.get('/staff', protect, getStaff);
 router.put('/staff/:id', protect, authorize('owner'), updateStaffProfile);
+router.delete('/staff/:id', protect, authorize('owner'), deleteStaff);
 router.put('/profile', protect, updateProfile);
+router.post('/push-token', protect, saveExpoPushToken);
 
 router.get('/owner-dashboard', protect, authorize('owner'), (req, res) => {
   res.json({ message: "Welcome, Boss!" });

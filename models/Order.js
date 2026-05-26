@@ -63,6 +63,8 @@ const orderSchema = new mongoose.Schema({
   dressType: { type: String, required: true },
   model: { type: String }, // e.g., "3 Dart Blouse", "Princess Blouse"
   referenceImage: { type: String },
+  sampleDressPhoto: { type: String },
+  audioInstruction: { type: String },
   description: String,
   fabricDetails: String,
   deliveryDate: { type: Date, required: true },
@@ -93,8 +95,13 @@ const orderSchema = new mongoose.Schema({
     paymentStatus: { type: String, enum: ['Unpaid', 'Partially Paid', 'Paid'], default: 'Unpaid' }
   },
   
-  assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // Master, Tailor, etc.
+  assignedTo: {
+    cuttingMaster: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    stitchingMaster: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
+  },
   
+  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+
   createdAt: { type: Date, default: Date.now }
 }, { timestamps: true });
 

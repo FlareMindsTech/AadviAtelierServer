@@ -34,7 +34,7 @@ export const createCustomer = async (req, res) => {
 
 export const getCustomers = async (req, res) => {
   try {
-    const customers = await Customer.find().sort({ createdAt: -1 });
+    const customers = await Customer.find().sort({ createdAt: -1 }).lean();
     res.status(200).json(customers);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -43,11 +43,11 @@ export const getCustomers = async (req, res) => {
 
 export const getCustomerById = async (req, res) => {
   try {
-    const customer = await Customer.findById(req.params.id);
+    const customer = await Customer.findById(req.params.id).lean();
     if (!customer) return res.status(404).json({ message: 'Customer not found' });
 
     // Fetch related stats
-    const orders = await Order.find({ customer: req.params.id }).sort({ createdAt: -1 });
+    const orders = await Order.find({ customer: req.params.id }).sort({ createdAt: -1 }).lean();
     const totalOrders = orders.length;
     const pendingRevenue = orders.reduce((sum, order) => sum + (order.billing?.balanceDue || 0), 0);
     const totalRevenue = orders.reduce((sum, order) => sum + (order.billing?.estimatedCost || 0), 0);
@@ -117,7 +117,7 @@ export const searchCustomer = async (req, res) => {
         { name: { $regex: query, $options: 'i' } },
         { mobileNumber: { $regex: query, $options: 'i' } }
       ]
-    });
+    }).lean();
     res.status(200).json(customers);
   } catch (error) {
     res.status(500).json({ message: error.message });

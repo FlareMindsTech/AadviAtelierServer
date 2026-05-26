@@ -1,5 +1,30 @@
 import Order from '../models/Order.js';
 import Customer from '../models/Customer.js';
+import User from '../models/User.js';
+import { Expo } from 'expo-server-sdk';
+
+const expo = new Expo();
+
+const sendPushNotification = async (tokens, title, body) => {
+  let messages = [];
+  for (let pushToken of tokens) {
+    if (!Expo.isExpoPushToken(pushToken)) continue;
+    messages.push({
+      to: pushToken,
+      sound: 'default',
+      title,
+      body,
+    });
+  }
+  let chunks = expo.chunkPushNotifications(messages);
+  for (let chunk of chunks) {
+    try {
+      await expo.sendPushNotificationsAsync(chunk);
+    } catch (error) {
+      console.error('Error sending push notification', error);
+    }
+  }
+};
 
 const getWorkflowSteps = (dressType, isAariWorkStr) => {
   const isAari = String(isAariWorkStr) === 'true';
@@ -55,6 +80,7 @@ export const createOrder = async (req, res) => {
 
     let referenceImage = '';
     let sampleDressPhoto = '';
+    let audioInstruction = '';
 
     if (req.files) {
       if (req.files.referenceImage) {
@@ -62,6 +88,9 @@ export const createOrder = async (req, res) => {
       }
       if (req.files.sampleDressPhoto) {
         sampleDressPhoto = req.files.sampleDressPhoto[0].path;
+      }
+      if (req.files.audioInstruction) {
+        audioInstruction = req.files.audioInstruction[0].path;
       }
     }
 
@@ -116,6 +145,8 @@ export const createOrder = async (req, res) => {
       dressType,
       model,
       referenceImage,
+      sampleDressPhoto,
+      audioInstruction,
       description,
       fabricDetails,
       deliveryDate,
@@ -132,7 +163,8 @@ export const createOrder = async (req, res) => {
         ...parsedBilling,
         balanceDue: (parsedBilling.estimatedCost || 0) - (parsedBilling.advancePaid || 0)
       },
-      assignedTo: assignedTo || null
+      assignedTo: assignedTo ? JSON.parse(assignedTo) : null,
+      createdBy: req.user ? req.user.id : null
     });
 
     await order.save();
@@ -144,7 +176,7 @@ export const createOrder = async (req, res) => {
 
 export const getOrders = async (req, res) => {
   try {
-    const orders = await Order.find().populate('customer').sort({ createdAt: -1 });
+    const orders = await Order.find().populate('customer').populate('createdBy', 'name role').sort({ createdAt: -1 }).lean();
     res.status(200).json(orders);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -153,7 +185,7 @@ export const getOrders = async (req, res) => {
 
 export const getOrderById = async (req, res) => {
   try {
-    const order = await Order.findById(req.params.id).populate('customer');
+    const order = await Order.findById(req.params.id).populate('customer').populate('createdBy', 'name role').lean();
     if (!order) return res.status(404).json({ message: 'Order not found' });
     res.status(200).json(order);
   } catch (error) {
@@ -167,8 +199,30 @@ export const updateOrderWorkflow = async (req, res) => {
     const order = await Order.findById(orderId);
     if (!order) return res.status(404).json({ message: 'Order not found' });
 
-    if (req.user && req.user.role !== 'owner' && order.assignedTo?.toString() !== req.user.id) {
-      return res.status(403).json({ message: 'Only assigned staff or owner can update workflow' });
+    if (req.user) {
+      const role = req.user.role;
+      const userId = req.user.id;
+      const stepName = order.workflow[stepIndex]?.step;
+
+      if (role !== 'owner' && role !== 'admin') {
+        if (role === 'cutting_master') {
+          if (order.assignedTo?.cuttingMaster?.toString() !== userId) {
+            return res.status(403).json({ message: 'Not assigned to this order as cutting master' });
+          }
+          if (!['Marking', 'Cutting'].includes(stepName)) {
+            return res.status(403).json({ message: 'Cutting masters can only update Marking and Cutting steps' });
+          }
+        } else if (role === 'stitching_master') {
+          if (order.assignedTo?.stitchingMaster?.toString() !== userId) {
+            return res.status(403).json({ message: 'Not assigned to this order as stitching master' });
+          }
+          if (!['Stitching', 'Aari Work / Embroidery', 'Hook and Hem'].includes(stepName)) {
+            return res.status(403).json({ message: 'Stitching masters can only update Stitching, Aari and Hook/Hem steps' });
+          }
+        } else {
+          return res.status(403).json({ message: 'Unauthorized role for workflow updates' });
+        }
+      }
     }
 
     if (order.workflow[stepIndex]) {
@@ -187,6 +241,21 @@ export const updateOrderWorkflow = async (req, res) => {
       }
       
       await order.save();
+      
+      // If completed by staff, notify owners
+      if (status === 'Completed' && req.user && (req.user.role === 'cutting_master' || req.user.role === 'stitching_master')) {
+        const owners = await User.find({ role: { $in: ['owner', 'admin'] } });
+        const tokens = owners.map(o => o.expoPushToken).filter(Boolean);
+        if (tokens.length > 0) {
+          const shortId = order.orderId ? order.orderId.split('-').pop() : '';
+          sendPushNotification(
+            tokens, 
+            "Task Completed ✅", 
+            `${order.workflow[stepIndex].step} completed by ${req.user.name || 'Staff'} for Order #${shortId}`
+          );
+        }
+      }
+
       res.status(200).json(order);
     } else {
       res.status(400).json({ message: 'Invalid step index' });
@@ -251,7 +320,7 @@ export const getDashboardStats = async (req, res) => {
 
 export const getWhatsAppLink = async (req, res) => {
   try {
-    const order = await Order.findById(req.params.id).populate('customer');
+    const order = await Order.findById(req.params.id).populate('customer').lean();
     if (!order) return res.status(404).json({ message: 'Order not found' });
 
     const { customer, orderId, status, workflow } = order;
@@ -270,7 +339,7 @@ export const getWhatsAppLink = async (req, res) => {
 
 export const getInvoiceWhatsAppLink = async (req, res) => {
   try {
-    const order = await Order.findById(req.params.id).populate('customer');
+    const order = await Order.findById(req.params.id).populate('customer').lean();
     if (!order) return res.status(404).json({ message: 'Order not found' });
 
     const { customer, orderId, billing, dressType, category, quantity } = order;
@@ -350,8 +419,59 @@ export const deleteOrder = async (req, res) => {
 
 export const getStaffOrders = async (req, res) => {
   try {
-    const orders = await Order.find({ assignedTo: req.user.id }).populate('customer').sort({ createdAt: -1 });
+    let query = {};
+    if (req.user.role === 'cutting_master') {
+      query = { 'assignedTo.cuttingMaster': req.user.id };
+    } else if (req.user.role === 'stitching_master') {
+      query = { 'assignedTo.stitchingMaster': req.user.id };
+    }
+    const orders = await Order.find(query).populate('customer').sort({ createdAt: -1 }).lean();
     res.status(200).json(orders);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const assignOrder = async (req, res) => {
+  try {
+    const { orderId, cuttingMaster, stitchingMaster } = req.body;
+    
+    // Get raw order data to check the current type of assignedTo
+    const order = await Order.findById(orderId).lean();
+    if (!order) return res.status(404).json({ message: 'Order not found' });
+    
+    let currentAssignedTo = {};
+    
+    // Check if assignedTo is already a proper object (not an ObjectId from the old schema)
+    if (order.assignedTo && typeof order.assignedTo === 'object' && !order.assignedTo._bsontype && !order.assignedTo.toHexString) {
+      currentAssignedTo = order.assignedTo;
+    }
+    
+    if (cuttingMaster !== undefined) currentAssignedTo.cuttingMaster = cuttingMaster;
+    if (stitchingMaster !== undefined) currentAssignedTo.stitchingMaster = stitchingMaster;
+    
+    await Order.updateOne(
+      { _id: orderId },
+      { $set: { assignedTo: currentAssignedTo } }
+    );
+    
+    // Send notifications to assigned staff
+    const tokens = [];
+    if (cuttingMaster) {
+      const cmUser = await User.findById(cuttingMaster);
+      if (cmUser && cmUser.expoPushToken) tokens.push(cmUser.expoPushToken);
+    }
+    if (stitchingMaster) {
+      const smUser = await User.findById(stitchingMaster);
+      if (smUser && smUser.expoPushToken) tokens.push(smUser.expoPushToken);
+    }
+    if (tokens.length > 0) {
+      const shortId = order.orderId ? order.orderId.split('-').pop() : '';
+      sendPushNotification(tokens, "New Work Assigned ✂️", `Order #${shortId} has been assigned to you.`);
+    }
+    
+    const populated = await Order.findById(orderId).populate('customer');
+    res.status(200).json(populated);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

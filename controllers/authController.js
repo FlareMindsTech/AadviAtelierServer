@@ -3,7 +3,7 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 
 export const register = async (req, res) => {
-  const { name, email, password, role, secretKey } = req.body;
+  const { name, mobileNumber, password, role, secretKey } = req.body;
 
   try {
     // 1. If trying to register as owner, check secret key
@@ -19,8 +19,8 @@ export const register = async (req, res) => {
       }
     }
 
-    // 2. Check if email already exists
-    const userExists = await User.findOne({ email });
+    // 2. Check if mobileNumber already exists
+    const userExists = await User.findOne({ mobileNumber });
     if (userExists) return res.status(400).json({ message: "User already exists" });
 
     // 3. Hash Password
@@ -30,10 +30,16 @@ export const register = async (req, res) => {
     // 4. Create User
     const newUser = new User({
       name,
-      email,
+      mobileNumber,
       password: hashedPassword,
-      role: role || 'staff'
+      role: role || 'admin'
     });
+
+    try {
+      await User.collection.dropIndex('email_1');
+    } catch (e) {
+      // index might not exist
+    }
 
     await newUser.save();
 
@@ -43,11 +49,23 @@ export const register = async (req, res) => {
   }
 };
 
+export const deleteStaff = async (req, res) => {
+  try {
+    const user = await User.findByIdAndDelete(req.params.id);
+    if (!user) {
+      return res.status(404).json({ message: "Staff not found" });
+    }
+    res.status(200).json({ message: "Staff deleted successfully" });
+  } catch (error) {
+    res.status(500).json({ message: "Server Error", error: error.message });
+  }
+};
+
 export const login = async (req, res) => {
-  const { email, password } = req.body;
+  const { mobileNumber, password } = req.body;
 
   try {
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ mobileNumber });
     if (!user) return res.status(404).json({ message: "User not found" });
 
     const isMatch = await bcrypt.compare(password, user.password);
@@ -61,7 +79,7 @@ export const login = async (req, res) => {
 
     res.json({
       token,
-      user: { id: user._id, name: user.name, email: user.email, role: user.role, profilePicture: user.profilePicture }
+      user: { id: user._id, name: user.name, mobileNumber: user.mobileNumber, role: user.role, profilePicture: user.profilePicture }
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -70,7 +88,7 @@ export const login = async (req, res) => {
 
 export const getStaff = async (req, res) => {
   try {
-    const staff = await User.find({ role: 'staff' }).select('-password');
+    const staff = await User.find({ role: { $in: ['admin', 'cutting_master', 'stitching_master'] } }).select('-password');
     res.status(200).json(staff);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -78,16 +96,16 @@ export const getStaff = async (req, res) => {
 };
 
 export const updateProfile = async (req, res) => {
-  const { name, email, profilePicture } = req.body;
+  const { name, mobileNumber, profilePicture } = req.body;
   try {
     const user = await User.findById(req.user.id);
     if (!user) return res.status(404).json({ message: "User not found" });
 
-    // Check if new email is already in use by another user
-    if (email && email !== user.email) {
-      const emailExists = await User.findOne({ email });
-      if (emailExists) return res.status(400).json({ message: "Email already in use" });
-      user.email = email;
+    // Check if new mobileNumber is already in use by another user
+    if (mobileNumber && mobileNumber !== user.mobileNumber) {
+      const mobileExists = await User.findOne({ mobileNumber });
+      if (mobileExists) return res.status(400).json({ message: "Mobile number already in use" });
+      user.mobileNumber = mobileNumber;
     }
 
     if (name) user.name = name;
@@ -97,7 +115,7 @@ export const updateProfile = async (req, res) => {
 
     res.json({
       message: "Profile updated successfully",
-      user: { id: user._id, name: user.name, email: user.email, role: user.role, profilePicture: user.profilePicture }
+      user: { id: user._id, name: user.name, mobileNumber: user.mobileNumber, role: user.role, profilePicture: user.profilePicture }
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -106,16 +124,16 @@ export const updateProfile = async (req, res) => {
 
 export const updateStaffProfile = async (req, res) => {
   const { id } = req.params;
-  const { name, email, role } = req.body;
+  const { name, mobileNumber, role } = req.body;
   
   try {
     const staff = await User.findById(id);
     if (!staff) return res.status(404).json({ message: "Staff not found" });
 
-    if (email && email !== staff.email) {
-      const emailExists = await User.findOne({ email });
-      if (emailExists) return res.status(400).json({ message: "Email already in use" });
-      staff.email = email;
+    if (mobileNumber && mobileNumber !== staff.mobileNumber) {
+      const mobileExists = await User.findOne({ mobileNumber });
+      if (mobileExists) return res.status(400).json({ message: "Mobile number already in use" });
+      staff.mobileNumber = mobileNumber;
     }
 
     if (name) staff.name = name;
@@ -126,8 +144,22 @@ export const updateStaffProfile = async (req, res) => {
 
     res.json({
       message: "Staff profile updated successfully",
-      staff: { id: staff._id, name: staff.name, email: staff.email, role: staff.role, profilePicture: staff.profilePicture }
+      staff: { id: staff._id, name: staff.name, mobileNumber: staff.mobileNumber, role: staff.role, profilePicture: staff.profilePicture }
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+export const saveExpoPushToken = async (req, res) => {
+  try {
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ message: "Token required" });
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ message: "User not found" });
+    user.expoPushToken = token;
+    await user.save();
+    res.json({ message: "Push token saved" });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
