@@ -15,7 +15,7 @@ import {
   assignOrder
 } from '../controllers/OrderController.js';
 import { protect } from '../middleware/auth.js';
-import { upload, uploadToGCS } from '../config/storage.js';
+import { upload, uploadToCloudinary } from '../config/storage.js';
 
 const router = express.Router();
 
@@ -24,7 +24,7 @@ router.route('/')
     { name: 'referenceImage', maxCount: 1 },
     { name: 'sampleDressPhoto', maxCount: 1 },
     { name: 'audioInstruction', maxCount: 1 }
-  ]), uploadToGCS, createOrder)
+  ]), uploadToCloudinary, createOrder)
   .get(protect, getOrders);
 
 router.get('/dashboard', protect, getDashboardStats);

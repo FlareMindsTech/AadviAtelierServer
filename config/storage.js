@@ -1,34 +1,41 @@
-import { Storage } from '@google-cloud/storage';
+import { v2 as cloudinary } from 'cloudinary';
 import multer from 'multer';
+import streamifier from 'streamifier';
+import dotenv from 'dotenv';
 import path from 'path';
 
-const storage = new Storage({
-  projectId: 'righttouch',
-  keyFilename: path.join(process.cwd(), 'config', 'gcs-key.json'),
-});
+// If config/storage.js is loaded early, ensure dotenv is configured
+dotenv.config();
 
-const bucketName = process.env.GCS_BUCKET_NAME || 'righttouch';
-const bucket = storage.bucket(bucketName);
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
 
 const multerStorage = multer.memoryStorage();
 export const upload = multer({ storage: multerStorage });
 
-export const uploadToGCS = async (req, res, next) => {
+export const uploadToCloudinary = async (req, res, next) => {
   if (!req.files && !req.file) return next();
 
   try {
-    const uploadFile = async (file) => {
-      const ext = path.extname(file.originalname);
-      const filename = `aadvi-atelier/${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
-      const blob = bucket.file(filename);
-      
-      await blob.save(file.buffer, {
-        resumable: false,
-        metadata: { contentType: file.mimetype }
+    const uploadFile = (file) => {
+      return new Promise((resolve, reject) => {
+        let stream = cloudinary.uploader.upload_stream(
+          { folder: 'aadvi-atelier', resource_type: 'auto' },
+          (error, result) => {
+            if (result) {
+              // Standardize file.path for other controllers to use easily
+              file.path = result.secure_url;
+              resolve(result);
+            } else {
+              reject(error);
+            }
+          }
+        );
+        streamifier.createReadStream(file.buffer).pipe(stream);
       });
-      
-      await blob.makePublic();
-      file.path = `https://storage.googleapis.com/${bucketName}/${filename}`;
     };
 
     if (req.file) {
@@ -42,7 +49,7 @@ export const uploadToGCS = async (req, res, next) => {
     }
     next();
   } catch (error) {
-    console.error('GCS Upload Error:', error);
+    console.error('Cloudinary Upload Error:', error);
     next(error);
   }
 };
