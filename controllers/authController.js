@@ -96,7 +96,7 @@ export const getStaff = async (req, res) => {
 };
 
 export const updateProfile = async (req, res) => {
-  const { name, mobileNumber, profilePicture } = req.body;
+  const { name, mobileNumber, removeProfilePicture } = req.body;
   try {
     const user = await User.findById(req.user.id);
     if (!user) return res.status(404).json({ message: "User not found" });
@@ -109,7 +109,11 @@ export const updateProfile = async (req, res) => {
     }
 
     if (name) user.name = name;
-    if (profilePicture !== undefined) user.profilePicture = profilePicture;
+    if (req.file && req.file.path) {
+      user.profilePicture = req.file.path;
+    } else if (removeProfilePicture === 'true') {
+      user.profilePicture = null;
+    }
 
     await user.save();
 
